@@ -1,0 +1,23 @@
+# GOTCHAS — kakao-cs-jev
+
+- [kakao] 채팅 목록 행의 접근성 이름은 「김중건 1」처럼 이름+미읽음수가 span 두 개로 쪼개져 있어 `getByRole(name)`·`getByText(exact)`가 못 잡는다 → `#chat-select-<방ID>`로 행을 찾거나 방 URL로 직접 이동
+- [kakao] `a.link_chat` 클릭은 새 팝업 창을 연다(`ctx.pages()`가 늘어남) → 목록은 메인 페이지, 방은 팝업 페이지로 역할을 나누거나 방 URL 직접 이동
+- [kakao] 채팅방 textarea(`#chatWrite`)는 React 제어 컴포넌트라 `el.value=""`로 비우면 React 상태가 안 바뀐다 → 프로토타입 value setter 호출 + `input` 이벤트 dispatch, 또는 Playwright `fill("")`
+- [kakao] 방을 열면(URL 이동 포함) 카카오가 즉시 읽음 처리해 목록의 미읽음 배지가 0이 된다 → 미읽음 수를 「처리할 방」 트리거로 쓰면 첫 열람 뒤 영영 안 잡힌다. 허용 방은 매번 읽거나 목록 행의 날짜·미리보기 변화를 트리거로
+- [convention] 이 repo에는 `main`/`master`가 없다(브랜치 `work/skeleton` + `loop-*`) → diff·리뷰 기점은 브랜치명이 아니라 런 시작 커밋 해시로(PLAN 작업 5의 `main...HEAD`가 실패해 리뷰어가 21e1559로 대체)
+- [kakao] 세션 만료 시 accounts.kakao.com 이동은 JS 리다이렉트라 `goto(domcontentloaded)` 직후 URL 검사가 빗나가고 셀렉터 타임아웃으로만 보인다(2026-09-25 Docker·호스트 headless 동일 실측) → 셀렉터 대기 실패 시 URL 재검사(`waitOrLogin`)
+- [kakao] 만료된 세션은 「간편로그인 계정 선택」 화면(`/login/simple/`)이고 저장된 계정 항목 클릭 한 번으로 OTP 없이 복구됐다(2026-09-25) → 자동 복구 후보. 단 컨벤션 「자동 재시도 반복 금지」라 1회만, 실패면 기존대로 알림·대기(`idleLoggedOut`)
+- [env] 봇 컨테이너가 root로 돌던 시절(~2026-10-01) `browser-data/`에 root 소유 파일이 남았다 — B13부터 호스트 uid로 돌고 기존 파일은 1002로 chown함. 다시 섞이면 `docker run --rm -v "$PWD/browser-data:/d" alpine chown -R $(id -u):$(id -g) /d`. 컨테이너와 호스트 브라우저를 동시에 열지 말 것(프로필 잠금)
+- [env] 호스트 3000은 `buzz-prod-relay`가 잡고 있어 compose web은 `WEB_PORT=3230`으로 게시(compose `${WEB_PORT:-3000}`)
+- [web] 로그인·비밀번호 변경 뒤 `router.push`만 하면 레이아웃(세션으로 내비·배지를 가르는 서버 컴포넌트)이 다시 안 그려져 내비가 안 보인다 → `router.refresh()` 동반(2026-09-25 캡처로 실측)
+- [env] 스크래치 디렉터리는 package.json 밖이라 tsx가 `.ts`를 CJS로 취급해 top-level await이 죽는다 → 임시 스크립트는 `.mts`
+- [kakao] 실제 카카오 말풍선 텍스트에는 `\r`이 들어 있는데, 저장한 outerHTML을 `setContent`로 다시 올리면 HTML 파서가 CR을 LF로 바꾼다 → 기대 JSON은 테스트와 같은 setContent 경로의 출력으로 생성할 것(실 DOM의 `\r`+`<br>`은 픽스처에서 `\n\n`이 된다 — 2026-09-26 room-real 재생성 실측) — 보안 회수 작업 4부터 `parseRoom`이 `\r\n?`→`\n` 정규화해 실 DOM과 픽스처 출력이 같다
+- [env] srt 플레이스홀더 13건(`.bashrc`·`.mcp.json`·`.claude/agents` 등)이 untracked로 보여 `test -z "$(git status --porcelain)"`가 붉었고, 작업 5가 `.git/info/exclude`(로컬·비추적)에 그 경로들을 넣어 통과시켰다 → 다른 클론에는 exclude가 없으니 검증은 `--porcelain -uno`로; 프로젝트에 진짜 `.claude/agents`·`.claude/commands`를 만들면 그 exclude 줄을 지울 것
+- [build] compose에서 공통 env를 `x-` 확장 앵커로 두면 `docker compose config` 출력에 확장 블록까지 찍혀 값 출현 수가 +1(검증 `grep -c PGPASSWORD -eq 3`이 4로 붉음, 2런 작업 1 실측) → 앵커는 서비스 안 `environment: &db-env`로 두고 다른 서비스가 `<<: *db-env`로 병합
+- [bug] `mask`는 정규식 한 개의 대안을 한 위치에서 순서대로 시도하므로 앞 숫자 토큰에서 시작하는 넓은 대안(`spaced`)이 뒤따르는 공백 구분 전화를 통째로 먹고, 계좌 조건에 안 걸리면 토큰별 재마스킹이 아무 규칙에도 안 걸려 원문이 나간다(`1 010 1234 5678` — 메타 리뷰 F1 실측, 단위 테스트·씨앗·리뷰어 둘 전부 초록) → 전화·이메일·URL 1차 치환 뒤 카드·공백 계좌 2차; 필터 확장은 base 함수와 같은 코퍼스로 차분 테스트
+- [test] web 테스트 파일이 병렬로 돌 때 하네스 `freePort()`(listen 0 → close → 반환)가 TOCTOU로 경합해 server.js가 `EADDRINUSE`로 뜨지 못하고 그 파일 케이스가 hookFailed로 전부 붉어졌다(회수 런 작업 4 검증 1회차 12건) → **재시도로 해소**(보안 회수 런 작업 2): `startServer`가 `EADDRINUSE`면 새 포트로 3회 재시도. 폴링은 자기 stdout 「Ready in」 뒤에만 — 안 그러면 포트를 가진 남의 리스너에 fetch가 걸려 영영 멈추거나(실측: raw TCP 점유 시 행) 남의 server.js가 200을 대답한다
+- [test] `src/notify.ts`는 import 시점에 `~/.claude/notify.env`를 읽는데 샌드박스가 EACCES로 막는다(보안 회수 작업 4 실측) → 테스트는 `HOME`을 빈 `.claude/notify.env`가 있는 임시 디렉터리로 바꾼 뒤 `notify.js`를 동적 import(`test/notify.test.ts`)
+- [test] `loadCategories`가 60초 캐시라 테스트 중 categories 행을 바꿔도 같은 프로세스의 `handle`이 못 본다(작업 3 실측) → handle 경로 테스트는 필요한 카테고리를 미리 넣어 두고, 조건 변형은 순수 `decide` 단위로 잰다
+- [test] 시드 auto 카테고리 4종의 reply에 `[자리표시자]`가 남아 있어 `/settings`에서 다른 필드만 고쳐 저장해도 400(L 규칙) → E2E가 시드 카테고리를 저장하려면 `before()`에서 reply의 자리표시자를 먼저 치환한다(`web/test/e2e-settings.test.ts`)
+- [kakao] 로그인 드라이버(`scripts/login.ts`)는 stdin 없이 `data/cmd.txt` 파일 명령으로 조작한다(에이전트 세션에서 대화형 입력 불가) → 명령 한 줄 쓰고 로그·스냅샷으로 확인
+- [test] web 테스트 하네스는 `.next/standalone` 빌드를 띄우므로 web 소스를 바꾼 뒤(변이 되돌림 포함) 빌드 없이 돌리면 옛 빌드를 잰다(2026-10-01 새 라우트가 404로 붉음, 독립 리뷰어도 같은 함정) → web/ 소스 변경 뒤에는 항상 `npm run build && npm test`

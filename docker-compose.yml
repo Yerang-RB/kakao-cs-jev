@@ -1,0 +1,92 @@
+# 명세 1절: db(내부만) · migrate(one-shot) · bot · web(127.0.0.1:3000만).
+# 기동: set -a; . ~/.claude/kakao-cs.env; set +a; docker compose up -d   (POSTGRES_PASSWORD·SESSION_SECRET·ROOMS)
+
+# 컨테이너 로그 상한(json-file 기본은 무제한). 로그는 보존 익명화 밖이라 고객 닉네임을 찍지 않는다(src/handle.ts roomTag).
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+# DB 접속은 URL이 아니라 PG* 환경변수로(비밀번호의 /·#·@가 URL을 깨지 않게). migrate·bot·web이 이 앵커를 병합한다.
+x-db-env: &db-env
+  PGHOST: db
+  PGUSER: cs
+  PGPASSWORD: ${POSTGRES_PASSWORD:?kakao-cs.env에 두세요}
+  PGDATABASE: cs
+
+services:
+  db:
+    image: postgres:16
+    logging: *logging
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=cs
+      - POSTGRES_DB=cs
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?kakao-cs.env에 두세요}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "cs", "-d", "cs"]
+      interval: 5s
+      retries: 20
+
+  migrate:
+    build: .
+    logging: *logging
+    command: ["node", "--import", "tsx", "scripts/migrate.ts"]
+    # web 전용 롤 cs_web의 비밀번호를 migrate가 건다(007, 리뷰 A4). bot은 슈퍼유저 cs 그대로.
+    environment:
+      <<: *db-env
+      WEB_DB_PASSWORD: ${WEB_DB_PASSWORD:?kakao-cs.env에 두세요(web 전용 DB 롤 비밀번호)}
+    depends_on:
+      db: { condition: service_healthy }
+
+  bot:
+    build: .
+    logging: *logging
+    container_name: kakao-cs-jev
+    restart: unless-stopped
+    # 리뷰 B13: root 대신 호스트 사용자 uid로(비밀 파일 600·browser-data 소유자와 같아야 읽힌다), 권한 전부 제거, Chromium 샌드박스 사용.
+    # 샌드박스는 비특권 user namespace가 필요해 Docker 기본 seccomp에 그 규칙만 더한 프로필을 쓴다(docker/seccomp-chromium.json). ipc: host 대신 shm_size.
+    user: "${HOST_UID:-1002}:${HOST_GID:-1002}"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true", "seccomp=./docker/seccomp-chromium.json"]
+    shm_size: "1gb"                # Chromium /dev/shm 부족 방지
+    environment:
+      TZ: Asia/Seoul
+      HOME: /tmp                   # 이미지에 없는 uid라 홈이 없다 — 쓰기 가능한 /tmp
+      HEADLESS: "1"
+      DRAFT: "1"                   # 초안 모드: 전송 없이 알림만. 자동 전송은 이 줄을 지운다
+      ROOMS: ${ROOMS:?허용 방ID를 쉼표로}   # 이 방만 연다(열면 읽음 처리됨)
+      BOT_SENDER: "봇계정님이 보냄"      # 봇 계정의 보낸이 표기(2026-10-01 실측). 이 표기 밖의 우리 쪽 답은 사람 상담원 답으로 보고 그 방 문의를 닫는다
+      CHANNEL_NAME: "상담채널"     # 카카오 채널 이름(임시 값 — 사용자 2026-10-01). 목록 화면 값과 다르면 봇이 방을 열지 않고 알린다
+      <<: *db-env
+    volumes:
+      - ./browser-data:/app/browser-data      # 영속 브라우저 프로필(로그인 유지)
+      - ./data:/app/data                      # 로그인 필요 스크린샷
+      - ${HOME}/.claude/typesafe.env:/tmp/.claude/typesafe.env:ro
+      - ${HOME}/.claude/notify.env:/tmp/.claude/notify.env:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  web:
+    build: { context: ., dockerfile: web/Dockerfile }   # 루트 컨텍스트: 라우트가 ../src를 번들한다
+    logging: *logging
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Seoul
+      <<: *db-env
+      PGUSER: cs_web                           # 인터넷에 노출되는 쪽은 슈퍼유저가 아닌 web 전용 롤(007, 리뷰 A4)
+      PGPASSWORD: ${WEB_DB_PASSWORD:?kakao-cs.env에 두세요(web 전용 DB 롤 비밀번호)}
+      SESSION_SECRET: ${SESSION_SECRET:?kakao-cs.env에 32자 이상으로 두세요}
+    user: "${HOST_UID:-1002}:${HOST_GID:-1002}"   # 이미지의 node(1000)는 호스트 600 파일(typesafe.env)을 못 읽는다 — 분류 미리보기가 운영에서 실패했다(B13에서 발견)
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"   # 호스트 3000은 buzz-prod-relay가 쓴다 → 이 서버는 WEB_PORT=3230
+    volumes:
+      - ${HOME}/.claude/typesafe.env:/home/node/.claude/typesafe.env:ro   # 2런 분류 미리보기(명세 4절 예외) — HOME은 이미지의 /home/node
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+volumes:
+  pgdata:

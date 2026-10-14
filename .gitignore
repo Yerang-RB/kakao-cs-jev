@@ -1,0 +1,12 @@
+node_modules/
+browser-data/
+*.db
+*.db-journal
+.env
+dist/
+data/
+web/.next/
+web/node_modules/
+web/tsconfig.tsbuildinfo
+_trash/
+.superdesign/

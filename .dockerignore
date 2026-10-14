@@ -1,0 +1,9 @@
+node_modules
+web/node_modules
+web/.next
+browser-data
+data
+.git
+.env
+.claude
+_trash

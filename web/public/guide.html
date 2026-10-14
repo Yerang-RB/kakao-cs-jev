@@ -1,0 +1,513 @@
+<!doctype html>
+<!-- 비개발자용 처리 흐름 안내(정적). 로그인 뒤에만 열린다 — proxy.ts 기본 거부가 public 파일에도 적용. 원본 아티팩트와 같은 내용. -->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>카카오 문의 자동 분류</title>
+<script>try{const m=document.cookie.match(/(?:^|; )theme=(light|dark)/);if(m)document.documentElement.dataset.theme=m[1]}catch{}</script>
+<style>
+@font-face{font-family:"Pretendard";src:url("/fonts/PretendardVariable.woff2") format("woff2");font-weight:45 920;font-display:swap}
+body{margin:0}
+.back{display:inline-flex;align-items:center;gap:6px;margin-bottom:18px;font-size:14px;font-weight:600;color:var(--accent);text-decoration:none}
+.back:hover{text-decoration:underline}
+[hidden]{display:none!important}
+:root{
+  --bg:#ffffff; --surface:#f6f7f9; --fg:#16181d; --muted:#6b7280; --quiet:#9ca3af;
+  --line:#e6e8ec; --line-strong:#d4d8de;
+  --accent:#2563eb; --accent-soft:#eff6ff;
+  --success:#16a34a; --success-soft:#effaf2;
+  --warning:#d97706; --warning-soft:#fff7ed;
+  --danger:#dc2626; --danger-soft:#fef2f2;
+  --on-solid:#ffffff;
+  --kakao:#fee500; --kakao-ink:#191600;
+  --chat-bg:#b9cddd; --bubble:#ffffff; --bubble-ink:#16181d; --phone:#16181d;
+  --shadow:rgb(22 24 29 / .12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#111317; --surface:#1a1d23; --fg:#e6e8ec; --muted:#9199a6; --quiet:#6b7280;
+    --line:#2a2e36; --line-strong:#3a3f49;
+    --accent:#5b9cf8; --accent-soft:#172540;
+    --success:#22c55e; --success-soft:#12261a;
+    --warning:#f59e0b; --warning-soft:#2a1e0e;
+    --danger:#f87171; --danger-soft:#2a1618;
+    --on-solid:#0b1220;
+    --chat-bg:#26323d; --bubble:#3a4450; --bubble-ink:#eef1f4; --phone:#050608;
+    --shadow:rgb(0 0 0 / .5);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#111317; --surface:#1a1d23; --fg:#e6e8ec; --muted:#9199a6; --quiet:#6b7280;
+  --line:#2a2e36; --line-strong:#3a3f49;
+  --accent:#5b9cf8; --accent-soft:#172540;
+  --success:#22c55e; --success-soft:#12261a;
+  --warning:#f59e0b; --warning-soft:#2a1e0e;
+  --danger:#f87171; --danger-soft:#2a1618;
+  --on-solid:#0b1220;
+  --chat-bg:#26323d; --bubble:#3a4450; --bubble-ink:#eef1f4; --phone:#050608;
+  --shadow:rgb(0 0 0 / .5);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:"Pretendard",system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;font-size:15px;line-height:1.6;word-break:keep-all;overflow-wrap:break-word}
+.wrap{max-width:1200px;margin:0 auto;padding-inline:20px;padding-block:28px 56px}
+h1{margin:0 0 6px;font-size:26px;font-weight:800;letter-spacing:-.02em;text-wrap:balance}
+.intro{margin:0 0 22px;color:var(--muted);max-width:64ch}
+.eyebrow{margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--muted)}
+button{font:inherit;color:inherit}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* 사례 고르기 */
+.picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:22px}
+.case{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--bg);text-align:left;cursor:pointer;transition:border-color .2s,background .2s}
+.case:hover{border-color:var(--line-strong)}
+.case[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.case b{font-size:14px}
+.case q{font-size:13px;color:var(--muted);quotes:"「" "」"}
+.case .end{align-self:flex-start;margin-top:4px}
+.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+.g{color:var(--success);background:var(--success-soft)}
+.a{color:var(--warning);background:var(--warning-soft)}
+.r{color:var(--danger);background:var(--danger-soft)}
+.n{color:var(--muted);background:var(--surface)}
+
+/* 진행 단계 + 설명 */
+.story{border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:18px;background:var(--bg)}
+.track{display:flex;gap:6px;margin:0 0 14px;padding:0;list-style:none;overflow-x:auto}
+.track li{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:12.5px;font-weight:600;color:var(--quiet)}
+.track li::before{content:"";height:4px;border-radius:2px;background:var(--line);transition:background .3s}
+.track li.done{color:var(--muted)}
+.track li.done::before{background:var(--accent);opacity:.45}
+.track li.cur{color:var(--accent)}
+.track li.cur::before{background:var(--accent)}
+.cap h2{margin:0 0 6px;font-size:20px;font-weight:800;letter-spacing:-.01em;text-wrap:balance}
+.cap p{margin:0;max-width:66ch;min-height:4.8em}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.ctl button{height:36px;padding:0 14px;border:1px solid var(--line-strong);border-radius:10px;background:var(--bg);font-size:14px;cursor:pointer}
+.ctl button:hover{background:var(--surface)}
+.ctl .main{background:var(--accent);border-color:var(--accent);color:var(--on-solid);font-weight:700}
+
+/* 무대 3단 */
+.stage{display:grid;grid-template-columns:300px minmax(0,1fr) 330px;gap:20px;align-items:start}
+.col-h{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:13px;font-weight:700;color:var(--muted)}
+.col-h i{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--surface);font-style:normal;font-size:12px;color:var(--fg)}
+
+/* 휴대폰 */
+.phone{width:100%;max-width:300px;border:10px solid var(--phone);border-radius:36px;overflow:hidden;background:var(--chat-bg);box-shadow:0 12px 32px var(--shadow)}
+.ph-top{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--chat-bg);border-bottom:1px solid rgb(0 0 0 / .06)}
+.ph-top .av{display:grid;place-items:center;width:32px;height:32px;border-radius:12px;background:var(--kakao);color:var(--kakao-ink);font-weight:800;font-size:13px}
+.ph-top b{display:block;font-size:14px;color:var(--bubble-ink)}
+.ph-top small{font-size:11px;color:var(--bubble-ink);opacity:.65}
+.chat{display:flex;flex-direction:column;gap:10px;height:430px;padding:14px 12px;overflow-y:auto}
+.msg{display:flex;flex-direction:column;max-width:82%;animation:pop .35s ease-out}
+.msg small{font-size:11px;color:var(--bubble-ink);opacity:.7;margin:0 4px 3px}
+.msg span{padding:8px 11px;border-radius:14px;font-size:13.5px;line-height:1.45;white-space:pre-line}
+.msg.me{align-self:flex-end;align-items:flex-end}
+.msg.me span{background:var(--kakao);color:var(--kakao-ink);border-top-right-radius:4px}
+.msg.shop{align-self:flex-start}
+.msg.shop span{background:var(--bubble);color:var(--bubble-ink);border-top-left-radius:4px}
+.msg.bot span{box-shadow:0 0 0 2px var(--success)}
+.typing{align-self:flex-end;display:flex;gap:4px;padding:10px 12px;border-radius:14px;background:var(--kakao)}
+.typing i{width:6px;height:6px;border-radius:50%;background:var(--kakao-ink);opacity:.4;animation:blink 1s infinite}
+.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+.waitbar{align-self:center;display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:999px;background:rgb(0 0 0 / .18);color:#fff;font-size:11.5px;font-weight:600}
+.waitbar em{display:block;width:70px;height:4px;border-radius:2px;background:rgb(255 255 255 / .3);overflow:hidden;font-style:normal}
+.waitbar em::after{content:"";display:block;height:100%;width:100%;background:#fff;transform-origin:left;animation:fill var(--dur,2s) linear forwards}
+@keyframes fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes blink{50%{opacity:1}}
+@keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* 가운데: 분류 + 기준 */
+.mid{display:flex;flex-direction:column;gap:16px}
+.card{border:1px solid var(--line);border-radius:16px;padding:16px;background:var(--bg);transition:border-color .3s,box-shadow .3s}
+.card.live{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.inbox{min-height:44px;margin-bottom:12px;padding:10px 12px;border:1px dashed var(--line-strong);border-radius:10px;font-size:14px;color:var(--quiet)}
+.inbox.full{white-space:pre-line;border-style:solid;background:var(--kakao);border-color:var(--kakao);color:var(--kakao-ink);font-weight:600;animation:pop .3s ease-out}
+.cats{display:grid;gap:5px;margin:0;padding:0;list-style:none}
+.cats li{display:grid;grid-template-columns:112px 1fr 40px;align-items:center;gap:10px;font-size:13px;padding:2px 6px;border-radius:6px;transition:background .3s}
+.cats li .nm{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.cats li .nm small{font-size:10.5px;font-weight:700;color:var(--success)}
+.cats li .bar{height:8px;border-radius:4px;background:var(--surface);overflow:hidden}
+.cats li .bar i{display:block;height:100%;width:0;border-radius:4px;background:var(--quiet);transition:width .9s cubic-bezier(.2,.7,.2,1)}
+.cats li .pc{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--muted)}
+.cats li.top{background:var(--accent-soft)}
+.cats li.top .bar i{background:var(--accent)}
+.cats li.top .pc,.cats li.top .nm{color:var(--fg);font-weight:700}
+.legend{margin:10px 0 0;font-size:12px;color:var(--muted)}
+.legend small{font-weight:700;color:var(--success)}
+
+.rules{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.rules li{display:grid;grid-template-columns:26px 1fr;gap:10px;align-items:start;padding:10px 12px;border-radius:10px;background:var(--surface);opacity:.45;transition:opacity .3s,background .3s}
+.rules li.on{opacity:1}
+.rules .ic{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--line);font-size:13px;font-weight:800;color:var(--muted)}
+.rules li.ok .ic{background:var(--success);color:var(--on-solid)}
+.rules li.no .ic{background:var(--warning);color:var(--on-solid)}
+.rules li.hot .ic{background:var(--danger);color:var(--on-solid)}
+.rules li.plain .ic{background:var(--line-strong);color:var(--fg)}
+.rules b{display:block;font-size:14px}
+.rules .ans{display:block;margin-top:2px;font-size:13px;color:var(--muted)}
+.rules li.no .ans{color:var(--warning);font-weight:600}
+.rules li.hot .ans{color:var(--danger);font-weight:600}
+.rules li.ok .ans{color:var(--success);font-weight:600}
+.rule-wrap{margin-bottom:16px}
+.rules li{padding:9px 11px}
+.rule-note{margin:10px 0 0;font-size:12.5px;color:var(--muted)}
+
+/* 오른쪽: 결과 */
+.outs{display:grid;gap:10px}
+.out{position:relative;display:grid;grid-template-columns:40px 1fr;gap:12px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--bg);transition:opacity .35s,border-color .35s,background .35s,transform .35s}
+.out svg{width:40px;height:40px;padding:9px;border-radius:12px;background:var(--surface);fill:none;stroke:var(--muted);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.out b{display:block;font-size:15px}
+.out p{margin:2px 0 0;font-size:13px;color:var(--muted)}
+.outs.decided .out{opacity:.35}
+.outs.decided .out.pick{opacity:1;transform:scale(1.02)}
+.out.pick.auto{border-color:var(--success);background:var(--success-soft)}
+.out.pick.auto svg{stroke:var(--success);background:var(--bg)}
+.out.pick.staff{border-color:var(--warning);background:var(--warning-soft)}
+.out.pick.staff svg{stroke:var(--warning);background:var(--bg)}
+.out.pick.quiet{border-color:var(--line-strong);background:var(--surface)}
+.out.pick.quiet svg{stroke:var(--fg);background:var(--bg)}
+.toast{grid-column:1/-1;display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:10px;background:var(--bg);border:1px solid var(--line-strong);border-left:4px solid var(--warning);font-size:12.5px;animation:pop .35s ease-out}
+.toast.hot{border-left-color:var(--danger)}
+.toast b{font-size:13px}
+.toast span{color:var(--muted)}
+
+.flyer{position:fixed;left:0;top:0;z-index:50;max-width:240px;padding:7px 12px;border-radius:14px;font-size:13px;font-weight:600;line-height:1.35;pointer-events:none;box-shadow:0 8px 20px var(--shadow);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.flyer.me{background:var(--kakao);color:var(--kakao-ink)}
+.flyer.auto{background:var(--success);color:var(--on-solid)}
+.flyer.staff{background:var(--warning);color:var(--on-solid)}
+.flyer.quiet{background:var(--fg);color:var(--bg)}
+
+.foot{margin-top:28px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);max-width:72ch}
+
+@media (max-width:1060px){
+  .stage{grid-template-columns:300px minmax(0,1fr)}
+  .col-out{grid-column:1/-1}
+  .outs{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+}
+@media (max-width:700px){
+  .wrap{padding-inline:16px}
+  .stage{grid-template-columns:minmax(0,1fr)}
+  .phone{margin:0 auto}
+  .chat{height:340px}
+  .track li{font-size:11px}
+  .case q{display:none}
+  .cats li{grid-template-columns:100px 1fr 38px}
+}
+@media (prefers-reduced-motion:reduce){
+  .msg,.inbox.full,.toast,.typing i{animation:none}
+  .cats li .bar i{transition:none}
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <a class="back" href="/queue">← 상담 화면으로</a>
+  <h1>카카오 문의 자동 분류</h1>
+  <p class="intro">고객이 카카오톡으로 문의를 보내면 봇이 읽고, AI(Jev)가 어떤 문의인지 분류합니다.<br>
+  그다음 정해 둔 기준에 따라 봇이 바로 답하거나, 직원에게 넘기거나, 광고는 조용히 보관합니다.<br>
+  아래에서 사례를 골라 한 건이 처리되는 과정을 보세요.</p>
+
+  <p class="eyebrow">사례 고르기</p>
+  <div class="picker" id="picker"></div>
+
+  <section class="story" aria-live="polite">
+    <ol class="track" id="track"></ol>
+    <div class="cap"><h2 id="capT"></h2><p id="capB"></p></div>
+    <div class="ctl">
+      <button type="button" class="main" id="bPlay"></button>
+      <button type="button" id="bNext">다음 사례 →</button>
+    </div>
+  </section>
+
+  <div class="stage">
+    <div>
+      <p class="col-h"><i>1</i>고객의 카카오톡</p>
+      <div class="phone">
+        <div class="ph-top"><span class="av">PC</span><div><b>PC 렌탈샵</b><small>카카오톡 채널 · 예시</small></div></div>
+        <div class="chat" id="chat"></div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <div>
+        <p class="col-h"><i>2</i>AI(Jev)가 문의 종류 분류</p>
+        <div class="card" id="clsCard">
+          <div class="inbox" id="inbox">받은 문의가 여기에 들어옵니다</div>
+          <ul class="cats" id="cats"></ul>
+          <p class="legend"><small>봇 답장</small> 표시가 있는 종류만 봇이 직접 답할 수 있습니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-out">
+      <div class="rule-wrap">
+        <p class="col-h"><i>3</i>처리 기준 확인</p>
+        <div class="card" id="ruleCard">
+          <ul class="rules" id="rules"></ul>
+          <p class="rule-note">위 세 가지 중 하나라도 걸리면 봇은 답하지 않고 직원에게 넘깁니다.<br>마지막 질문은 직원 알림에 🔴긴급 표시를 붙이는 기준이고, 급한 광고는 보관하지 않고 직원에게 보냅니다.</p>
+        </div>
+      </div>
+      <p class="col-h"><i>4</i>처리 결과</p>
+      <div class="outs" id="outs">
+        <div class="out auto" id="o-auto">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M9 10.5l2 2 4-4"/></svg>
+          <div><b>봇이 바로 답장</b><p>가게가 미리 써 둔 답변을 보냅니다.<br>직원에게도 Discord 알림이 갑니다.</p></div>
+        </div>
+        <div class="out staff" id="o-staff">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+          <div><b>직원에게 전달</b><p>Discord 알림을 보내고 상담 화면 대기 목록에 올립니다.</p></div>
+        </div>
+        <div class="out quiet" id="o-quiet">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10h14V9M10 13h4"/></svg>
+          <div><b>광고는 조용히 보관</b><p>답장도 알림도 없이 기록만 남깁니다.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="foot">사례의 문장·이름·점수는 이해를 돕기 위한 예시입니다.<br>
+  기준값(확신 90%, 이어지는 질문 80%, 긴급 70%, 대기 45초)은 기본 설정값이고, 관리자가 설정 화면에서 바꿀 수 있습니다.<br>
+  지금은 시험 운영(초안 모드) 중이라 봇이 실제로 답장을 보내지 않고, 모든 문의를 직원에게 넘깁니다.<br>
+  또 가게가 답변 문장의 빈칸(예: [요금표 링크])을 다 채워 두지 않은 종류는 봇이 보내지 않고 직원에게 넘깁니다.<br>
+  답장 문장은 AI가 만들지 않고, 가게가 종류별로 미리 써 둔 문장만 보냅니다.<br>
+  AI 분류가 실패하면(연결 오류 등) 봇은 답하지 않고 직원에게 넘깁니다.</p>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// 문의 종류: [id, 이름, 봇 답장 가능, 광고]
+const CATS = [
+  ["hours", "영업시간·휴무", true], ["price", "요금", true], ["return", "반납·연장", true], ["delivery", "배송·수령", true],
+  ["stock", "예약·재고", false], ["broken", "고장·오작동", false], ["refund", "환불·취소", false], ["spam", "광고", false, true], ["other", "기타", false],
+];
+const CAT = Object.fromEntries(CATS.map(([id, l, auto, spam]) => [id, { l, auto, spam: !!spam }]));
+const TH = { conf: 0.9, followup: 0.8, urgent: 0.7 };
+const pct = (v) => Math.round(v * 100) + "%";
+
+const CASES = [
+  { id: "hours", label: "영업시간 문의", name: "박지훈", msg: "일요일에도 문 여나요?",
+    p: { hours: 0.97, other: 0.02, price: 0.01 }, urgent: 0.02, followup: 0.04,
+    reply: "안녕하세요.\n영업시간은 매일 10:00~20:00이며, 일요일은 휴무입니다.",
+    why: "봇이 답할 수 있는 종류이고, 97% 확신하며, 이어지는 질문도 아닙니다.<br>기준을 모두 통과해서 봇이 바로 답합니다." },
+  { id: "broken", label: "고장 신고", name: "이서연", msg: "노트북 화면이 계속 깜빡거려요",
+    p: { broken: 0.93, other: 0.04, refund: 0.03 }, urgent: 0.35, followup: 0.06,
+    staff: "불편을 드려 죄송합니다.\n교체 기기를 오늘 오후에 보내 드리겠습니다.",
+    why: "AI가 93% 확신하지만, 고장 신고는 봇이 답하지 않는 종류입니다.<br>사람이 상황을 보고 판단해야 하므로 직원에게 넘깁니다." },
+  { id: "urgent", label: "급한 고장", name: "최도윤", msg: "내일 아침 행사인데 빌린 노트북 3대가 다 안 켜져요 급합니다",
+    p: { broken: 0.95, stock: 0.03, other: 0.02 }, urgent: 0.91, followup: 0.03,
+    staff: "바로 확인하겠습니다.\n오늘 저녁까지 교체 3대를 보내 드리겠습니다.",
+    why: "고장 신고라 직원에게 넘기고, 급한 정도가 91%라서 🔴긴급 표시를 붙입니다.<br>상담 화면에서도 긴급 문의가 맨 위에 보입니다." },
+  { id: "unsure", label: "애매한 문의", name: "김나래", msg: "주말에 가져가서 월요일에 드려도 되나요?",
+    p: { return: 0.62, stock: 0.3, other: 0.08 }, urgent: 0.1, followup: 0.05,
+    staff: "네, 가능합니다.\n월요일 오후 8시까지 반납해 주시면 됩니다.",
+    why: "반납 문의일 가능성이 가장 높지만 AI의 확신이 62%뿐입니다.<br>90%에 못 미치면 잘못 답할 수 있어서 직원에게 넘깁니다." },
+  { id: "split", label: "나눠 보낸 메시지", name: "정하은", parts: ["안녕하세요", "이번 주말에 맥북 2대", "빌릴 수 있을까요?"],
+    msg: "안녕하세요 이번 주말에 맥북 2대 빌릴 수 있을까요?",
+    p: { stock: 0.92, price: 0.05, other: 0.03 }, urgent: 0.18, followup: 0.05,
+    staff: "네, 이번 주말 맥북 2대 가능합니다.\n찾으러 오실 시간을 알려 주세요.",
+    why: "세 줄을 한 문의로 합쳐 보니 예약·재고 문의였습니다.<br>날짜와 재고를 직접 확인해야 하는 종류라서 직원에게 넘깁니다." },
+  { id: "followup", label: "이어지는 질문", name: "한유진",
+    prior: [["me", "게이밍 노트북 하루 대여 얼마예요?"], ["shop", "하루 3만 원입니다.\n주말은 3만 5천 원입니다.", "직원"]],
+    msg: "그럼 보증금도 따로 있나요?",
+    p: { price: 0.91, other: 0.05, refund: 0.04 }, urgent: 0.05, followup: 0.88,
+    staff: "보증금은 따로 없습니다.\n신분증 확인만 해 주시면 됩니다.",
+    why: "요금 문의는 봇이 답할 수 있지만, 직원이 방금 한 답에 이어 되묻는 질문입니다.<br>정해 둔 답변이 맞지 않을 수 있어서 직원에게 넘깁니다." },
+  { id: "spam", label: "광고 메시지", name: "마케팅센터", msg: "사장님 인스타그램 마케팅 도와드립니다 무료 상담 가능",
+    p: { spam: 0.97, other: 0.02, price: 0.01 }, urgent: 0.01, followup: 0.02,
+    why: "97% 확신하는 광고이고 급한 내용도 아닙니다.<br>답장도 알림도 보내지 않고 기록만 남깁니다.<br>잘못 분류됐으면 나중에 기록 화면에서 바로잡을 수 있습니다." },
+];
+
+function outcome(c) {
+  const [top, conf] = Object.entries(c.p)[0], k = CAT[top];
+  if (k.auto && conf >= TH.conf && c.followup < TH.followup) return "auto";
+  if (k.spam && conf >= TH.conf && c.urgent < TH.urgent && c.followup < TH.followup) return "quiet";
+  return "staff";
+}
+function rulesOf(c) {
+  const [top, conf] = Object.entries(c.p)[0], k = CAT[top];
+  const kind = k.auto ? "봇이 답할 수 있는 종류" : k.spam ? "광고" : "직원이 봐야 하는 종류";
+  return [
+    ["어떤 종류의 문의인가요?", `${k.l} → ${kind}`, k.auto || k.spam ? "ok" : "no"],
+    ["AI가 충분히 확신하나요? (기준 90%)", `${pct(conf)} 확신${conf >= TH.conf ? "" : " → 부족"}`, conf >= TH.conf ? "ok" : "no"],
+    ["직원 답변에 이어 되묻는 질문인가요?", c.followup >= TH.followup ? `예 (${pct(c.followup)}) → 직원이 이어서 답해야 함` : "아니요", c.followup >= TH.followup ? "no" : "ok"],
+    ["급한 문의인가요? (기준 70%)", c.urgent >= TH.urgent ? `예 (${pct(c.urgent)}) → 🔴긴급 표시` : "아니요", c.urgent >= TH.urgent ? "hot" : k.spam ? "ok" : "plain"],
+  ];
+}
+const END = { auto: ["봇 답장", "g"], staff: ["직원 전달", "a"], quiet: ["조용히 보관", "n"] };
+const STEPS = ["고객 문의", "잠시 기다림", "AI 분류", "기준 확인", "처리"];
+
+/* ── 화면 조각 ── */
+CASES.forEach((c, i) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "case";
+  const e = END[outcome(c)], hot = c.urgent >= TH.urgent;
+  b.innerHTML = `<b>${esc(c.label)}</b><q>${esc(c.parts ? c.parts.join(" / ") : c.msg)}</q><span class="end tag ${hot ? "r" : e[1]}">${hot ? "직원 전달 · 긴급" : e[0]}</span>`;
+  b.onclick = () => play(i);
+  $("picker").appendChild(b);
+});
+$("track").innerHTML = STEPS.map((s) => `<li>${s}</li>`).join("");
+$("cats").innerHTML = CATS.map(([id, l, auto]) => `<li data-id="${id}"><span class="nm">${l}${auto ? "<small>봇 답장</small>" : ""}</span><span class="bar"><i></i></span><span class="pc">—</span></li>`).join("");
+
+function bubble(who, text, sub) {
+  const d = document.createElement("div");
+  d.className = "msg " + (who === "me" ? "me" : "shop" + (sub === "봇 자동 답장" ? " bot" : ""));
+  d.innerHTML = (sub ? `<small>${esc(sub)}</small>` : "") + `<span>${esc(text)}</span>`;
+  $("chat").appendChild(d); $("chat").scrollTop = 1e6;
+  return d;
+}
+function stage(i, title, body) {
+  [...$("track").children].forEach((li, k) => li.className = k < i ? "done" : k === i ? "cur" : "");
+  $("capT").textContent = title; $("capB").innerHTML = body;
+}
+
+/* ── 재생 ── */
+let run = 0, cur = 0, playing = false;
+const wait = (ms, my) => new Promise((r) => setTimeout(() => r(my === run), REDUCE ? Math.min(ms, 400) : ms));
+
+async function fly(from, to, text, cls, my) {
+  const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+  const f = document.createElement("div");
+  f.className = "flyer " + cls; f.textContent = text;
+  document.body.appendChild(f);
+  const w = f.offsetWidth, h = f.offsetHeight;
+  const at = (r) => `translate(${r.left + r.width / 2 - w / 2}px,${r.top + r.height / 2 - h / 2}px)`;
+  const anim = f.animate([{ transform: at(a) + " scale(.85)", opacity: .6 }, { transform: at(a) + " scale(1)", opacity: 1, offset: .15 }, { transform: at(b) + " scale(1)", opacity: 1 }],
+    { duration: REDUCE ? 1 : 1200, easing: "cubic-bezier(.5,0,.3,1)" });
+  await anim.finished.catch(() => {});
+  f.remove();
+  return my === run;
+}
+
+function reset(c) {
+  document.querySelectorAll(".flyer").forEach((f) => f.remove());
+  $("chat").innerHTML = "";
+  for (const [who, t, sub] of c.prior || []) bubble(who, t, sub);
+  $("inbox").className = "inbox"; $("inbox").textContent = "받은 문의가 여기에 들어옵니다";
+  $("cats").querySelectorAll("li").forEach((li) => { li.className = ""; li.querySelector("i").style.width = "0"; li.querySelector(".pc").textContent = "—"; });
+  $("rules").innerHTML = rulesOf(c).map(([q]) => `<li><span class="ic">?</span><span><b>${q}</b><span class="ans">확인 전</span></span></li>`).join("");
+  $("outs").className = "outs";
+  document.querySelectorAll(".out").forEach((o) => { o.classList.remove("pick"); o.querySelector(".toast")?.remove(); });
+  $("clsCard").classList.remove("live"); $("ruleCard").classList.remove("live");
+}
+
+async function play(i) {
+  const my = ++run; cur = i; playing = true; sync();
+  const c = CASES[i], end = outcome(c), rules = rulesOf(c), [top, conf] = Object.entries(c.p)[0];
+  [...$("picker").children].forEach((b, k) => b.setAttribute("aria-pressed", k === i));
+  try { localStorage.setItem("kcs-story", c.id); } catch {}
+  reset(c);
+
+  // 1. 고객 문의 (나눠 보낸 사례는 parts가 여러 줄)
+  const parts = c.parts || [c.msg];
+  const send = async (text) => {
+    const typing = document.createElement("div"); typing.className = "typing"; typing.innerHTML = "<i></i><i></i><i></i>";
+    $("chat").appendChild(typing); $("chat").scrollTop = 1e6;
+    const ok = await wait(1300, my);
+    typing.remove();
+    return ok && bubble("me", text);
+  };
+  const waitBar = (label, secs) => {
+    const wb = document.createElement("div"); wb.className = "waitbar"; wb.style.setProperty("--dur", REDUCE ? "0s" : secs + "s");
+    wb.innerHTML = `${label} <em></em>`;
+    $("chat").appendChild(wb); $("chat").scrollTop = 1e6;
+    return wb;
+  };
+  stage(0, "고객이 카카오톡으로 문의를 보냅니다", `${esc(c.name)}님이 가게 카카오톡 채널에 메시지를 보냅니다.`);
+  let b = await send(parts[0]);
+  if (!b || !await wait(1400, my)) return;
+
+  // 2. 기다림 — 새 메시지가 오면 45초를 처음부터 다시 센다
+  stage(1, "봇이 메시지를 확인하고 잠시 기다립니다", "고객이 말을 여러 번 나눠 보낼 수도 있어서, 마지막 메시지 뒤 45초 동안 더 오는 말이 없는지 봅니다.<br>그래서 실제로는 보통 1분 안팎에 처리됩니다.");
+  for (const text of parts.slice(1)) {
+    const wb = waitBar("45초 기다리는 중", 2.6);
+    if (!await wait(1100, my)) return;
+    wb.remove();
+    b = await send(text);
+    if (!b) return;
+    stage(1, "새 메시지가 와서 처음부터 다시 기다립니다", "기다리는 사이 고객이 이어서 보냈습니다.<br>마지막 메시지가 바뀌었으므로 45초를 처음부터 다시 셉니다.<br>그래서 나눠 보낸 말이 한 문의로 모입니다.");
+    if (!await wait(1200, my)) return;
+  }
+  const wb = waitBar(parts.length > 1 ? "다시 45초 기다리는 중" : "45초 기다리는 중", 2.6);
+  if (!await wait(2800, my)) return;
+  wb.remove();
+
+  // 3. AI 분류
+  stage(2, "AI(Jev)가 어떤 문의인지 분류합니다", (parts.length > 1 ? `45초 동안 더 온 말이 없어서, ${parts.length}줄을 한 문의로 합쳐 분류합니다.<br>` : "") + "미리 정해 둔 9가지 종류 가운데 어디에 가까운지, 얼마나 확실한지를 점수로 알려 줍니다.<br>전화번호·계좌번호 같은 개인정보는 가리고 보냅니다.<br>AI는 분류만 하고, 답장 문장을 직접 만들지는 않습니다.");
+  $("clsCard").classList.add("live");
+  if (!await fly(b, $("inbox"), c.msg, "me", my)) return;
+  $("inbox").className = "inbox full"; $("inbox").textContent = parts.join("\n");
+  if (!await wait(500, my)) return;
+  $("cats").querySelectorAll("li").forEach((li) => {
+    const v = c.p[li.dataset.id] || 0;
+    li.querySelector("i").style.width = v * 100 + "%";
+    li.querySelector(".pc").textContent = v ? pct(v) : "0%";
+  });
+  if (!await wait(1100, my)) return;
+  $("cats").querySelector(`[data-id="${top}"]`).className = "top";
+  $("capB").innerHTML += `<br><strong>결과: ${CAT[top].l} ${pct(conf)}</strong>`;
+  if (!await wait(2200, my)) return;
+  $("clsCard").classList.remove("live");
+
+  // 4. 기준 확인
+  stage(3, "정해 둔 기준으로 확인합니다", "네 가지를 차례로 봅니다.<br>앞의 세 가지 중 하나라도 걸리면 봇은 답하지 않고 직원에게 넘깁니다.<br>마지막 질문(급한가)은 직원 알림에 🔴긴급 표시를 붙이는 기준입니다.");
+  $("ruleCard").classList.add("live");
+  const lis = $("rules").children;
+  for (let k = 0; k < rules.length; k++) {
+    if (!await wait(900, my)) return;
+    const [, ans, st] = rules[k];
+    lis[k].className = "on " + st;
+    lis[k].querySelector(".ic").textContent = st === "ok" ? "✓" : st === "no" ? "!" : st === "hot" ? "!" : "–";
+    lis[k].querySelector(".ans").textContent = ans;
+  }
+  if (!await wait(1600, my)) return;
+  $("ruleCard").classList.remove("live");
+
+  // 5. 처리
+  const target = $("o-" + end);
+  const T = { auto: "봇이 바로 답장합니다", staff: c.urgent >= TH.urgent ? "긴급 표시를 달아 직원에게 넘깁니다" : "직원에게 넘깁니다", quiet: "광고라서 조용히 보관합니다" };
+  stage(4, T[end], c.why);
+  if (!await fly($("inbox"), target, c.msg, end, my)) return;
+  $("outs").className = "outs decided"; target.classList.add("pick");
+  if (!await wait(1500, my)) return;
+
+  if (end === "auto") {
+    if (!await fly(target, $("chat"), "미리 써 둔 답변", "auto", my)) return;
+    bubble("shop", c.reply, "봇 자동 답장");
+    $("capB").innerHTML = c.why + "<br><strong>고객은 문의 후 약 1분 안에 답을 받습니다.</strong><br>직원에게도 봇이 답했다는 알림이 갑니다.";
+  } else if (end === "staff") {
+    const hot = c.urgent >= TH.urgent;
+    const t = document.createElement("div");
+    t.className = "toast" + (hot ? " hot" : "");
+    t.innerHTML = `<b>${hot ? "🔴긴급 " : ""}새 문의 알림</b><span>${CAT[top].l} ${pct(conf)} · 상담 화면 링크</span>`;
+    target.appendChild(t);
+    stage(4, "직원이 Discord 알림을 받습니다", "알림에는 고객 이름이나 문의 내용 없이 분류 결과와 상담 화면 링크만 옵니다.<br>개인정보가 메신저에 남지 않게 하려는 것입니다.<br>직원은 링크를 눌러 상담 화면에서 문의를 확인하고 맡아 처리합니다.");
+    if (!await wait(2600, my)) return;
+    if (!await fly(target, $("chat"), "직원 답장", "staff", my)) return;
+    bubble("shop", c.staff, "직원");
+    stage(4, "직원이 카카오톡으로 직접 답합니다", "봇은 이 문의에 답하지 않았습니다.<br>직원이 답한 뒤 상담 화면에서 완료로 표시하면 처리가 끝납니다.");
+  } else {
+    $("capB").innerHTML = c.why;
+  }
+  if (!await wait(600, my)) return;
+  [...$("track").children].forEach((li) => li.className = "done");
+  playing = false; sync();
+}
+
+function sync() { $("bPlay").textContent = playing ? "처음부터 다시" : "↻ 다시 보기"; }
+$("bPlay").onclick = () => play(cur);
+$("bNext").onclick = () => play((cur + 1) % CASES.length);
+
+let start = 0;
+try { const id = location.hash.slice(1) || localStorage.getItem("kcs-story"); const k = CASES.findIndex((c) => c.id === id); if (k >= 0) start = k; } catch {}
+play(start);
+</script>
+
+</body>
+</html>
